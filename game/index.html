@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>3×3 삼목</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f4efe6;
+  --text: #2a2118;
+  --muted: #6b5d4f;
+  --board: #dcb46e;
+  --board-edge: #b88a42;
+  --line: #5a4022;
+  --win: #c0392b;
+  --accent: #2f5d8a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1814;
+    --text: #efe7da;
+    --muted: #b3a48f;
+    --board: #b98f4d;
+    --board-edge: #8a6530;
+    --line: #3d2a14;
+    --win: #ff6b5a;
+    --accent: #8ab4e8;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  display: flex;
+  justify-content: center;
+}
+main { width: 100%; max-width: 440px; padding: 24px 16px 40px; text-align: center; }
+h1 { font-size: 1.5rem; margin: 0 0 4px; }
+.rule { color: var(--muted); margin: 0 0 16px; font-size: 0.95rem; }
+.status {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 2rem; font-weight: 600; font-size: 1.1rem; margin-bottom: 12px;
+}
+.mini { width: 1.1rem; height: 1.1rem; border-radius: 50%; display: inline-block; }
+.mini.black, .stone.black { background: radial-gradient(circle at 35% 30%, #666, #111 60%); }
+.mini.white, .stone.white { background: radial-gradient(circle at 35% 30%, #fff, #d6d6d6 70%); box-shadow: inset 0 0 0 1px #999; }
+.board {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  width: min(100%, 360px);
+  aspect-ratio: 1;
+  margin: 0 auto;
+  padding: 10px;
+  background: var(--board);
+  border: 3px solid var(--board-edge);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.25);
+  gap: 0;
+}
+.cell {
+  position: relative;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+/* 칸 안쪽에 바둑판처럼 가는 선을 그린다 */
+.cell::before, .cell::after { content: ""; position: absolute; background: var(--line); pointer-events: none; }
+.cell::before { left: 0; right: 0; top: 50%; height: 1.5px; transform: translateY(-50%); }
+.cell::after { top: 0; bottom: 0; left: 50%; width: 1.5px; transform: translateX(-50%); }
+.cell:nth-child(3n+1)::before { left: 50%; }
+.cell:nth-child(3n)::before { right: 50%; }
+.cell:nth-child(-n+3)::after { top: 50%; }
+.cell:nth-child(n+7)::after { bottom: 50%; }
+.cell:disabled { cursor: default; }
+.cell:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; border-radius: 6px; }
+.stone {
+  position: relative; z-index: 1;
+  width: 78%; height: 78%; border-radius: 50%;
+  box-shadow: 0 3px 5px rgba(0,0,0,.35);
+  animation: drop .15s ease-out;
+}
+.cell.win .stone { outline: 4px solid var(--win); outline-offset: 2px; }
+.cell:not(:disabled):hover .ghost { opacity: .35; }
+.ghost { position: relative; z-index: 1; width: 78%; height: 78%; border-radius: 50%; opacity: 0; transition: opacity .1s; }
+@keyframes drop { from { transform: scale(1.25); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .stone { animation: none; } }
+.actions { margin: 18px 0 10px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+button.action {
+  font: inherit; padding: 8px 16px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--board-edge); background: transparent; color: var(--text);
+}
+button.action.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+button.action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.score { display: flex; justify-content: center; gap: 20px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.score span { display: inline-flex; align-items: center; gap: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>3×3 삼목</h1>
+  <p class="rule">흑과 백이 번갈아 돌을 놓습니다. 가로·세로·대각선으로 먼저 3개를 이으면 이깁니다.</p>
+
+  <div class="status" id="status" role="status" aria-live="polite"></div>
+  <div class="board" id="board" role="grid" aria-label="3×3 판"></div>
+
+  <div class="actions">
+    <button type="button" class="action primary" id="restart">새 판</button>
+    <button type="button" class="action" id="undo">한 수 무르기</button>
+    <button type="button" class="action" id="reset-score">점수 초기화</button>
+  </div>
+  <div class="score" aria-label="점수">
+    <span><i class="mini black"></i>흑 <b id="score-black">0</b></span>
+    <span>무승부 <b id="score-draw">0</b></span>
+    <span><i class="mini white"></i>백 <b id="score-white">0</b></span>
+  </div>
+</main>
+
+<!-- 게임 규칙: DOM을 건드리지 않는 순수 함수만 둔다. test/game.test.js가 이 블록을 꺼내 시험한다. -->
+<script id="game-core">
+"use strict";
+globalThis.TicTacToe = (function () {
+  var LINES = [
+    [0, 1, 2], [3, 4, 5], [6, 7, 8],
+    [0, 3, 6], [1, 4, 7], [2, 5, 8],
+    [0, 4, 8], [2, 4, 6]
+  ];
+
+  function newGame() {
+    return { board: [null, null, null, null, null, null, null, null, null], turn: "black", winner: null, line: null, history: [] };
+  }
+
+  // 판(9칸 배열)을 보고 { winner: "black"|"white"|"draw"|null, line: [칸 번호 3개]|null }를 돌려준다.
+  function judge(board) {
+    for (var i = 0; i < LINES.length; i++) {
+      var a = LINES[i][0], b = LINES[i][1], c = LINES[i][2];
+      if (board[a] && board[a] === board[b] && board[a] === board[c]) {
+        return { winner: board[a], line: LINES[i].slice() };
+      }
+    }
+    for (var k = 0; k < 9; k++) if (!board[k]) return { winner: null, line: null };
+    return { winner: "draw", line: null };
+  }
+
+  // 돌을 놓은 새 상태를 돌려준다. 놓을 수 없으면 원래 상태를 그대로 돌려준다.
+  function play(state, index) {
+    if (state.winner || index < 0 || index > 8 || index !== Math.floor(index) || state.board[index]) return state;
+    var board = state.board.slice();
+    board[index] = state.turn;
+    var result = judge(board);
+    return {
+      board: board,
+      turn: state.turn === "black" ? "white" : "black",
+      winner: result.winner,
+      line: result.line,
+      history: state.history.concat([index])
+    };
+  }
+
+  // 마지막 수를 무른 상태를 돌려준다.
+  function undo(state) {
+    var s = newGame();
+    for (var i = 0; i < state.history.length - 1; i++) s = play(s, state.history[i]);
+    return s;
+  }
+
+  return Object.freeze({ LINES: LINES, newGame: newGame, judge: judge, play: play, undo: undo });
+})();
+</script>
+
+<!-- 화면 -->
+<script id="game-ui">
+"use strict";
+(function () {
+  var NAME = { black: "흑", white: "백" };
+  var boardEl = document.getElementById("board");
+  var statusEl = document.getElementById("status");
+  var undoBtn = document.getElementById("undo");
+  var score = { black: 0, white: 0, draw: 0 };
+  var state = TicTacToe.newGame();
+  var cells = [];
+
+  for (var i = 0; i < 9; i++) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cell";
+    btn.dataset.index = String(i);
+    btn.addEventListener("click", onCell);
+    btn.addEventListener("keydown", onKey);
+    boardEl.appendChild(btn);
+    cells.push(btn);
+  }
+
+  function onCell(e) {
+    var before = state;
+    state = TicTacToe.play(state, Number(e.currentTarget.dataset.index));
+    if (state !== before && state.winner) score[state.winner]++;
+    render();
+  }
+
+  // 방향키로 칸 사이를 옮겨 다닌다.
+  function onKey(e) {
+    var i = Number(e.currentTarget.dataset.index);
+    var r = Math.floor(i / 3), c = i % 3;
+    if (e.key === "ArrowUp") r = (r + 2) % 3;
+    else if (e.key === "ArrowDown") r = (r + 1) % 3;
+    else if (e.key === "ArrowLeft") c = (c + 2) % 3;
+    else if (e.key === "ArrowRight") c = (c + 1) % 3;
+    else return;
+    e.preventDefault();
+    cells[r * 3 + c].focus();
+  }
+
+  function stone(color, cls) {
+    var s = document.createElement("span");
+    s.className = cls + " " + color;
+    return s;
+  }
+
+  function render() {
+    var over = Boolean(state.winner);
+    cells.forEach(function (cell, i) {
+      var v = state.board[i];
+      cell.textContent = "";
+      cell.classList.toggle("win", Boolean(state.line && state.line.indexOf(i) >= 0));
+      if (v) cell.appendChild(stone(v, "stone"));
+      else if (!over) cell.appendChild(stone(state.turn, "ghost"));
+      cell.disabled = over || Boolean(v);
+      var row = Math.floor(i / 3) + 1, col = (i % 3) + 1;
+      cell.setAttribute("aria-label", row + "행 " + col + "열, " + (v ? NAME[v] + " 돌" : "빈 칸"));
+    });
+
+    statusEl.textContent = "";
+    if (state.winner === "draw") {
+      statusEl.textContent = "무승부입니다";
+    } else if (state.winner) {
+      statusEl.appendChild(stone(state.winner, "mini"));
+      statusEl.appendChild(document.createTextNode(NAME[state.winner] + " 승리!"));
+    } else {
+      statusEl.appendChild(stone(state.turn, "mini"));
+      statusEl.appendChild(document.createTextNode(NAME[state.turn] + " 차례"));
+    }
+    undoBtn.disabled = state.history.length === 0 || over;
+    document.getElementById("score-black").textContent = score.black;
+    document.getElementById("score-white").textContent = score.white;
+    document.getElementById("score-draw").textContent = score.draw;
+  }
+
+  document.getElementById("restart").addEventListener("click", function () {
+    state = TicTacToe.newGame();
+    render();
+    cells[4].focus();
+  });
+  undoBtn.addEventListener("click", function () {
+    state = TicTacToe.undo(state);
+    render();
+  });
+  document.getElementById("reset-score").addEventListener("click", function () {
+    score = { black: 0, white: 0, draw: 0 };
+    render();
+  });
+  render();
+})();
+</script>
+</body>
+</html>
