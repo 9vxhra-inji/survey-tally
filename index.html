@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>설문 집계기</title>
+</head>
+<body>
+<!-- 계산 로직: DOM을 건드리지 않는 순수 함수만 둔다. test/core.test.js가 이 블록을 꺼내 시험한다. -->
+<script id="tally-core">
+"use strict";
+globalThis.SurveyTally = (function () {
+  var VALID = /^[1-5]$/;
+
+  // 엑셀 복사 형식(탭 구분)을 줄·칸 배열로 읽는다.
+  // 큰따옴표로 감싼 칸은 한 칸으로 읽고("" 는 " 하나), 닫는 따옴표 뒤가
+  // 탭·줄바꿈·끝이 아니면 감싼 칸이 아닌 것으로 보고 글자 그대로 읽는다.
+  // 글자가 하나도 없는 줄은 응답 줄로 치지 않는다.
+  function parseTable(text) {
+    text = String(text == null ? "" : text);
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    var rows = [];
+    var row = [];
+    var field = "";
+    var atFieldStart = true;
+    var lineStart = 0;
+    var n = text.length;
+    var i = 0;
+
+    function endField() {
+      row.push(field);
+      field = "";
+      atFieldStart = true;
+    }
+    function endLine(lineEnd) {
+      if (lineEnd > lineStart) {
+        endField();
+        rows.push(row);
+      }
+      row = [];
+      field = "";
+      atFieldStart = true;
+    }
+
+    while (i < n) {
+      var c = text.charAt(i);
+      if (c === '"' && atFieldStart) {
+        var j = i + 1;
+        var value = "";
+        var closed = false;
+        while (j < n) {
+          var d = text.charAt(j);
+          if (d === '"') {
+            if (text.charAt(j + 1) === '"') {
+              value += '"';
+              j += 2;
+            } else {
+              closed = true;
+              break;
+            }
+          } else {
+            value += d;
+            j++;
+          }
+        }
+        var next = text.charAt(j + 1);
+        if (closed && (j + 1 >= n || next === "\t" || next === "\r" || next === "\n")) {
+          field = value;
+          atFieldStart = false;
+          i = j + 1;
+          continue;
+        }
+        field += c;
+        atFieldStart = false;
+        i++;
+        continue;
+      }
+      if (c === "\t") {
+        endField();
+        i++;
+      } else if (c === "\r" || c === "\n") {
+        endLine(i);
+        i += c === "\r" && text.charAt(i + 1) === "\n" ? 2 : 1;
+        lineStart = i;
+      } else {
+        field += c;
+        atFieldStart = false;
+        i++;
+      }
+    }
+    endLine(n);
+    return rows;
+  }
+
+  // 한 칸을 "valid"(유효) · "blank"(빈 응답) · "excluded"(제외) 중 하나로 판정한다.
+  function classifyCell(value) {
+    if (value == null) return "blank";
+    var t = String(value).trim();
+    if (t === "") return "blank";
+    return VALID.test(t) ? "valid" : "excluded";
+  }
+
+  // 합 ÷ 수를 소수 셋째 자리에서 반올림해 둘째 자리까지 쓴다. 수가 0이면 "-".
+  // 부동소수 오차를 피하려고 정수로만 계산한다(합·수는 0 이상의 정수).
+  function formatAverage(sum, count) {
+    if (!count) return "-";
+    var hundredths = Math.floor((200 * sum + count) / (2 * count));
+    var frac = String(hundredths % 100);
+    if (frac.length < 2) frac = "0" + frac;
+    return Math.floor(hundredths / 100) + "." + frac;
+  }
+
+  // 붙여넣은 글을 집계한다.
+  // 결과: { ok: true, responseCount, questions: [{ column, name, valid, average, blank, excluded }] }
+  //   또는 { ok: false, reason: "empty" | "no-questions" }
+  function tally(text) {
+    var rows = parseTable(text);
+    if (rows.length === 0) return { ok: false, reason: "empty" };
+    var header = rows[0];
+    if (header.length < 2) return { ok: false, reason: "no-questions" };
+
+    var questions = [];
+    var sums = [];
+    for (var q = 1; q < header.length; q++) {
+      var name = header[q].trim();
+      questions.push({
+        column: q + 1,
+        name: name === "" ? "(이름 없음 " + (q + 1) + "열)" : name,
+        valid: 0,
+        average: "-",
+        blank: 0,
+        excluded: 0
+      });
+      sums.push(0);
+    }
+
+    for (var r = 1; r < rows.length; r++) {
+      var cells = rows[r];
+      for (var k = 0; k < questions.length; k++) {
+        var cell = cells[k + 1];
+        var kind = classifyCell(cell);
+        var item = questions[k];
+        if (kind === "valid") {
+          item.valid++;
+          sums[k] += Number(String(cell).trim());
+        } else if (kind === "blank") {
+          item.blank++;
+        } else {
+          item.excluded++;
+        }
+      }
+    }
+
+    for (var m = 0; m < questions.length; m++) {
+      questions[m].average = formatAverage(sums[m], questions[m].valid);
+    }
+    return { ok: true, responseCount: rows.length - 1, questions: questions };
+  }
+
+  return Object.freeze({
+    parseTable: parseTable,
+    classifyCell: classifyCell,
+    formatAverage: formatAverage,
+    tally: tally
+  });
+})();
+</script>
+</body>
+</html>

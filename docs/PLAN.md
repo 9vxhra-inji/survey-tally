@@ -41,7 +41,7 @@
   - `<script id="tally-ui">`: 화면. 입력을 읽어 `SurveyTally.tally`를 부르고 결과를 `textContent`로 표에 그린다(`innerHTML` 미사용).
 - `test/core.test.js`: `index.html`에서 `tally-core` 스크립트를 꺼내 Node `vm`에서 실행하고 계산 규칙을 시험한다.
 - `test/page.test.js`: `index.html`에 외부 주소·네트워크·저장 코드가 없는지, CSP가 있는지, `.nojekyll`이 빈 파일인지 확인한다.
-- `package.json`: 의존성 없이 `npm test` → `node --test`.
+- `package.json`: 의존성 없이 `npm test` → `node --test "test/*.test.js"`.
 
 ## 작업 순서(작업마다 커밋)
 
