@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>설문 집계기</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f7f7f5;
+  --panel: #ffffff;
+  --text: #1d1d1f;
+  --muted: #5f6368;
+  --line: #d9d9d6;
+  --head: #efefec;
+  --accent: #1f5fbf;
+  --accent-text: #ffffff;
+  --warn: #9a3412;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17181a;
+    --panel: #202124;
+    --text: #e8e8e6;
+    --muted: #a0a3a8;
+    --line: #3a3b3e;
+    --head: #2a2b2e;
+    --accent: #7aa7ff;
+    --accent-text: #0d1117;
+    --warn: #fdba74;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  line-height: 1.5;
+}
+main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 1.5rem; margin: 0 0 4px; }
+.lead, .note, .status { color: var(--muted); margin: 0; }
+.lead { margin-bottom: 16px; }
+label { display: block; font-weight: 600; margin: 16px 0 6px; }
+textarea {
+  width: 100%;
+  min-height: 180px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: 0.9rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  tab-size: 8;
+  resize: vertical;
+}
+.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0 4px; }
+button {
+  font: inherit;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.status { margin: 12px 0 8px; }
+.status.warn { color: var(--warn); }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }
+caption { text-align: left; font-weight: 600; padding: 0 0 6px; }
+th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
+th { background: var(--head); font-weight: 600; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; white-space: pre-line; word-break: break-word; }
+tbody th { background: transparent; font-weight: 500; }
+.note { font-size: 0.875rem; margin-top: 24px; }
+.note ul { margin: 4px 0 0; padding-left: 1.2em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>설문 집계기</h1>
+  <p class="lead">엑셀에서 머리글 줄까지 복사해 아래에 붙여넣으면 문항별 결과가 나옵니다. 첫 열(응답번호)은 집계하지 않습니다.</p>
+
+  <label for="input">응답 데이터</label>
+  <textarea id="input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="응답번호&#9;문항1&#9;문항2&#10;1&#9;5&#9;4&#10;2&#9;3&#9;"></textarea>
+  <div class="actions">
+    <button type="button" class="primary" id="run">집계</button>
+    <button type="button" id="clear">지우기</button>
+  </div>
+
+  <p class="status" id="status" role="status" aria-live="polite">데이터를 붙여넣으면 바로 집계합니다.</p>
+  <div class="table-wrap" id="result" hidden>
+    <table>
+      <caption>문항별 결과</caption>
+      <thead>
+        <tr><th scope="col">문항</th><th scope="col">유효 응답</th><th scope="col">평균</th><th scope="col">빈 응답</th><th scope="col">제외</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>판정 기준</strong>
+    <ul>
+      <li>유효: 앞뒤 공백을 지운 값이 1·2·3·4·5 중 하나</li>
+      <li>빈 응답: 비었거나 공백만 있는 칸, 칸 수가 머리글보다 모자란 줄의 모자란 칸</li>
+      <li>제외: 그 밖의 값</li>
+      <li>평균: 유효 응답의 합 ÷ 유효 응답 수, 소수 둘째 자리까지(셋째 자리에서 반올림). 유효가 0이면 "-"</li>
+    </ul>
+    <p>붙여넣은 데이터는 이 브라우저 안에서만 계산하며, 어디로도 보내거나 저장하지 않습니다.</p>
+  </div>
+</main>
+<!-- 계산 로직: DOM을 건드리지 않는 순수 함수만 둔다. test/core.test.js가 이 블록을 꺼내 시험한다. -->
+<script id="tally-core">
+"use strict";
+globalThis.SurveyTally = (function () {
+  var VALID = /^[1-5]$/;
+
+  // 엑셀 복사 형식(탭 구분)을 줄·칸 배열로 읽는다.
+  // 큰따옴표로 감싼 칸은 한 칸으로 읽고("" 는 " 하나), 닫는 따옴표 뒤가
+  // 탭·줄바꿈·끝이 아니면 감싼 칸이 아닌 것으로 보고 글자 그대로 읽는다.
+  // 글자가 하나도 없는 줄은 응답 줄로 치지 않는다.
+  function parseTable(text) {
+    text = String(text == null ? "" : text);
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    var rows = [];
+    var row = [];
+    var field = "";
+    var atFieldStart = true;
+    var lineStart = 0;
+    var n = text.length;
+    var i = 0;
+
+    function endField() {
+      row.push(field);
+      field = "";
+      atFieldStart = true;
+    }
+    function endLine(lineEnd) {
+      if (lineEnd > lineStart) {
+        endField();
+        rows.push(row);
+      }
+      row = [];
+      field = "";
+      atFieldStart = true;
+    }
+
+    while (i < n) {
+      var c = text.charAt(i);
+      if (c === '"' && atFieldStart) {
+        var j = i + 1;
+        var value = "";
+        var closed = false;
+        while (j < n) {
+          var d = text.charAt(j);
+          if (d === '"') {
+            if (text.charAt(j + 1) === '"') {
+              value += '"';
+              j += 2;
+            } else {
+              closed = true;
+              break;
+            }
+          } else {
+            value += d;
+            j++;
+          }
+        }
+        var next = text.charAt(j + 1);
+        if (closed && (j + 1 >= n || next === "\t" || next === "\r" || next === "\n")) {
+          field = value;
+          atFieldStart = false;
+          i = j + 1;
+          continue;
+        }
+        field += c;
+        atFieldStart = false;
+        i++;
+        continue;
+      }
+      if (c === "\t") {
+        endField();
+        i++;
+      } else if (c === "\r" || c === "\n") {
+        endLine(i);
+        i += c === "\r" && text.charAt(i + 1) === "\n" ? 2 : 1;
+        lineStart = i;
+      } else {
+        field += c;
+        atFieldStart = false;
+        i++;
+      }
+    }
+    endLine(n);
+    return rows;
+  }
+
+  // 한 칸을 "valid"(유효) · "blank"(빈 응답) · "excluded"(제외) 중 하나로 판정한다.
+  function classifyCell(value) {
+    if (value == null) return "blank";
+    var t = String(value).trim();
+    if (t === "") return "blank";
+    return VALID.test(t) ? "valid" : "excluded";
+  }
+
+  // 합 ÷ 수를 소수 셋째 자리에서 반올림해 둘째 자리까지 쓴다. 수가 0이면 "-".
+  // 부동소수 오차를 피하려고 정수로만 계산한다(합·수는 0 이상의 정수).
+  function formatAverage(sum, count) {
+    if (!count) return "-";
+    var hundredths = Math.floor((200 * sum + count) / (2 * count));
+    var frac = String(hundredths % 100);
+    if (frac.length < 2) frac = "0" + frac;
+    return Math.floor(hundredths / 100) + "." + frac;
+  }
+
+  // 붙여넣은 글을 집계한다.
+  // 결과: { ok: true, responseCount, questions: [{ column, name, valid, average, blank, excluded }] }
+  //   또는 { ok: false, reason: "empty" | "no-questions" }
+  function tally(text) {
+    var rows = parseTable(text);
+    if (rows.length === 0) return { ok: false, reason: "empty" };
+    var header = rows[0];
+    if (header.length < 2) return { ok: false, reason: "no-questions" };
+
+    var questions = [];
+    var sums = [];
+    for (var q = 1; q < header.length; q++) {
+      var name = header[q].trim();
+      questions.push({
+        column: q + 1,
+        name: name === "" ? "(이름 없음 " + (q + 1) + "열)" : name,
+        valid: 0,
+        average: "-",
+        blank: 0,
+        excluded: 0
+      });
+      sums.push(0);
+    }
+
+    for (var r = 1; r < rows.length; r++) {
+      var cells = rows[r];
+      for (var k = 0; k < questions.length; k++) {
+        var cell = cells[k + 1];
+        var kind = classifyCell(cell);
+        var item = questions[k];
+        if (kind === "valid") {
+          item.valid++;
+          sums[k] += Number(String(cell).trim());
+        } else if (kind === "blank") {
+          item.blank++;
+        } else {
+          item.excluded++;
+        }
+      }
+    }
+
+    for (var m = 0; m < questions.length; m++) {
+      questions[m].average = formatAverage(sums[m], questions[m].valid);
+    }
+    return { ok: true, responseCount: rows.length - 1, questions: questions };
+  }
+
+  return Object.freeze({
+    parseTable: parseTable,
+    classifyCell: classifyCell,
+    formatAverage: formatAverage,
+    tally: tally
+  });
+})();
+</script>
+<!-- 화면: 입력을 읽어 SurveyTally.tally를 부르고 결과를 그린다. -->
+<script id="tally-ui">
+"use strict";
+(function () {
+  var input = document.getElementById("input");
+  var status = document.getElementById("status");
+  var result = document.getElementById("result");
+  var tbody = document.getElementById("rows");
+
+  function setStatus(text, warn) {
+    status.textContent = text;
+    status.className = warn ? "status warn" : "status";
+  }
+
+  function render() {
+    var text = input.value;
+    tbody.textContent = "";
+    if (text.trim() === "") {
+      result.hidden = true;
+      setStatus("데이터를 붙여넣으면 바로 집계합니다.", false);
+      return;
+    }
+    var out = SurveyTally.tally(text);
+    if (!out.ok) {
+      result.hidden = true;
+      setStatus(out.reason === "no-questions"
+        ? "문항 열이 없습니다. 머리글 줄과 함께 두 열 이상(응답번호, 문항…)을 붙여넣어 주세요."
+        : "읽을 수 있는 줄이 없습니다.", true);
+      return;
+    }
+    out.questions.forEach(function (q) {
+      var tr = document.createElement("tr");
+      [q.name, q.valid, q.average, q.blank, q.excluded].forEach(function (value, i) {
+        var cell = document.createElement(i === 0 ? "th" : "td");
+        if (i === 0) cell.scope = "row";
+        cell.textContent = String(value);
+        tr.appendChild(cell);
+      });
+      tbody.appendChild(tr);
+    });
+    result.hidden = false;
+    setStatus("응답 " + out.responseCount + "줄, 문항 " + out.questions.length + "개를 집계했습니다." +
+      (out.responseCount === 0 ? " (머리글 아래에 응답 줄이 없습니다)" : ""), out.responseCount === 0);
+  }
+
+  input.addEventListener("input", render);
+  document.getElementById("run").addEventListener("click", render);
+  document.getElementById("clear").addEventListener("click", function () {
+    input.value = "";
+    render();
+    input.focus();
+  });
+  render();
+})();
+</script>
+</body>
+</html>
